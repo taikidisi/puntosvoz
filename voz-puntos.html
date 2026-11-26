@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>TTS por puntos del canal</title>
+<style>
+  html, body { margin:0; background:transparent; font-family: Arial, sans-serif; color:#fff; }
+  #log { position:fixed; left:10px; bottom:10px; right:10px; font-size:18px; text-shadow:0 0 4px #000; }
+  #log div { margin-top:4px; background:rgba(0,0,0,.6); padding:4px 8px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div id="log"></div>
+<script>
+/*
+  TTS por canje de puntos del canal (Twitch). Sin instalar nada, sin tokens.
+
+  Uso (fuente de navegador en OBS):
+    voz-puntos.html?channel=taiki_02&reward=ID_DEL_CANJE
+
+  Parametros:
+    channel  canal de Twitch (obligatorio)
+    reward   ID del canje (si lo omitis, lee cualquier canje con texto)
+    engine   google (voz de Google, por defecto) | browser (voz del navegador)
+    lang     idioma, por defecto es
+    rate     velocidad (solo browser), por defecto 1
+    pitch    tono (solo browser), por defecto 1
+    maxlen   maximo de caracteres a leer, por defecto 200
+    name     1 = dice "usuario dice: ..." antes del mensaje
+    debug    1 = muestra en pantalla los canjes recibidos con su ID
+*/
+const q = new URLSearchParams(location.search);
+const CHANNEL = (q.get('channel') || '').toLowerCase().replace('#','');
+const REWARD  = q.get('reward') || '';
+const ENGINE  = q.get('engine') || 'google';
+const LANG    = q.get('lang') || 'es';
+const RATE    = parseFloat(q.get('rate') || '1');
+const PITCH   = parseFloat(q.get('pitch') || '1');
+const MAXLEN  = parseInt(q.get('maxlen') || '200', 10);
+const SAYNAME = q.get('name') === '1';
+const DEBUG   = q.get('debug') === '1';
+
+const logEl = document.getElementById('log');
+function show(t){
+  if(!DEBUG) return;
+  const d = document.createElement('div'); d.textContent = t; logEl.appendChild(d);
+  while(logEl.children.length > 6) logEl.removeChild(logEl.firstChild);
+}
+
+if(!CHANNEL){ DEBUG || (q.set('debug','1')); const d=document.createElement('div'); d.textContent='Falta ?channel=TUCANAL'; logEl.appendChild(d); }
+
+// ---------- cola de voz ----------
+const queue = []; let speaking = false;
+function enqueue(text){ queue.push(text); next(); }
+function next(){
+  if(speaking || !queue.length) return;
+  speaking = true;
+  const text = queue.shift();
+  const done = () => { speaking = false; next(); };
+  if(ENGINE === 'google') speakGoogle(text, done); else speakBrowser(text, done);
+}
+function speakBrowser(text, done){
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = LANG; u.rate = RATE; u.pitch = PITCH;
+  u.onend = done; u.onerror = done;
+  speechSynthesis.speak(u);
+}
+function chunks(text){
+  const out = []; let t = text;
+  while(t.length > 180){
+    let i = t.lastIndexOf(' ', 180); if(i < 50) i = 180;
+    out.push(t.slice(0, i)); t = t.slice(i).trim();
+  }
+  if(t) out.push(t); return out;
+}
+function speakGoogle(text, done){
+  const parts = chunks(text);
+  const play = () => {
+    if(!parts.length) return done();
+    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=' + encodeURIComponent(LANG) + '&q=' + encodeURIComponent(parts.shift());
+    const a = new Audio(url);
+    a.onended = play;
+    a.onerror = () => { speakBrowser(parts.join(' ') || text, done); };
+    a.play().catch(() => speakBrowser(text, done));
+  };
+  play();
+}
+
+// ---------- limpieza del mensaje ----------
+function clean(msg, emotesTag){
+  let chars = Array.from(msg);
+  if(emotesTag){
+    const ranges = [];
+    emotesTag.split('/').forEach(e => {
+      const r = e.split(':')[1]; if(!r) return;
+      r.split(',').forEach(p => { const [s,en] = p.split('-').map(Number); ranges.push([s,en]); });
+    });
+    ranges.sort((a,b) => b[0]-a[0]).forEach(([s,e]) => chars.splice(s, e-s+1));
+  }
+  let t = chars.join('').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  return t.slice(0, MAXLEN);
+}
+
+// ---------- chat anonimo de Twitch (IRC por WebSocket) ----------
+function connect(){
+  const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+  ws.onopen = () => {
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('NICK justinfan' + Math.floor(Math.random()*90000+10000));
+    ws.send('JOIN #' + CHANNEL);
+  };
+  ws.onmessage = ev => ev.data.split('\r\n').forEach(line => {
+    if(!line) return;
+    if(line.startsWith('PING')){ ws.send('PONG :tmi.twitch.tv'); return; }
+    if(!line.startsWith('@') || line.indexOf(' PRIVMSG ') < 0) return;
+    const sp = line.indexOf(' ');
+    const tags = {};
+    line.slice(1, sp).split(';').forEach(kv => { const i = kv.indexOf('='); tags[kv.slice(0,i)] = kv.slice(i+1); });
+    const rid = tags['custom-reward-id'];
+    if(!rid) return;                       // no es un canje
+    const msg = line.slice(line.indexOf(' :', line.indexOf('PRIVMSG')) + 2);
+    show('Canje ' + rid + ' | ' + (tags['display-name']||'') + ': ' + msg);
+    if(REWARD && rid !== REWARD) return;   // otro canje
+    let text = clean(msg, tags['emotes']);
+    if(!text) return;
+    if(SAYNAME) text = (tags['display-name'] || '') + ' dice: ' + text;
+    enqueue(text);
+  });
+  ws.onclose = () => setTimeout(connect, 3000);
+}
+if(CHANNEL) connect();
+</script>
+</body>
+</html>
