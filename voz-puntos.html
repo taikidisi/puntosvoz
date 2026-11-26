@@ -157,8 +157,19 @@ function connect(){
     if(REWARD && rid !== REWARD) return;   // otro canje
     let text = clean(msg, tags['emotes']);
     if(!text) return;
-    if(SAYNAME) text = (tags['display-name'] || '') + ' dice: ' + text;
-    claim(tags['id'], () => { show('[' + ME.slice(0,4) + '] leyendo: ' + text); enqueue(text); });
+    let who = '';
+    if(SAYNAME){
+      who = (tags['display-name'] || tags['login'] || '')
+        .replace(/[_\-.]+/g, ' ')            // guiones bajos y simbolos -> espacio
+        .replace(/([a-zA-Z])(\d)/g, '$1 $2') // separa letras de numeros
+        .replace(/\s+/g, ' ').trim();
+      if(who) who += ' dice';
+    }
+    claim(tags['id'], () => {
+      show('[' + ME.slice(0,4) + '] leyendo: ' + (who ? who + ' … ' : '') + text);
+      if(who) enqueue(who);                  // el nombre va en un audio aparte
+      enqueue(text);
+    });
   });
   ws.onclose = () => setTimeout(connect, 3000);
 }
