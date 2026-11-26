@@ -105,6 +105,25 @@ function clean(msg, emotesTag){
   return t.slice(0, MAXLEN);
 }
 
+// ---------- si hay varias copias de la pagina en OBS, lee solo una ----------
+const ME = Math.random().toString(36).slice(2);
+function claim(id, cb){
+  if(!id) return cb();
+  try{
+    const k = 'ttsclaim_' + id;
+    setTimeout(() => {
+      if(localStorage.getItem(k)) return;       // otra copia ya lo reclamo
+      localStorage.setItem(k, ME);
+      setTimeout(() => {
+        if(localStorage.getItem(k) === ME){
+          cb();
+          setTimeout(() => { try{ localStorage.removeItem(k); }catch(e){} }, 60000);
+        }
+      }, 60);
+    }, Math.random() * 100);
+  }catch(e){ cb(); }
+}
+
 // ---------- chat anonimo de Twitch (IRC por WebSocket) ----------
 const seen = new Set();
 let currentWs = null;
@@ -137,7 +156,7 @@ function connect(){
     let text = clean(msg, tags['emotes']);
     if(!text) return;
     if(SAYNAME) text = (tags['display-name'] || '') + ' dice: ' + text;
-    enqueue(text);
+    claim(tags['id'], () => enqueue(text));
   });
   ws.onclose = () => setTimeout(connect, 3000);
 }
