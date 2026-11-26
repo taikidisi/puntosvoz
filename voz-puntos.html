@@ -56,7 +56,8 @@ function next(){
   if(speaking || !queue.length) return;
   speaking = true;
   const text = queue.shift();
-  const done = () => { speaking = false; next(); };
+  let finished = false;
+  const done = () => { if(finished) return; finished = true; speaking = false; next(); };
   if(ENGINE === 'google') speakGoogle(text, done); else speakBrowser(text, done);
 }
 function speakBrowser(text, done){
@@ -75,13 +76,16 @@ function chunks(text){
 }
 function speakGoogle(text, done){
   const parts = chunks(text);
+  let failed = false;
+  const fail = (rest) => { if(failed) return; failed = true; speakBrowser(rest, done); };
   const play = () => {
     if(!parts.length) return done();
-    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=' + encodeURIComponent(LANG) + '&q=' + encodeURIComponent(parts.shift());
+    const piece = parts.shift();
+    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=' + encodeURIComponent(LANG) + '&q=' + encodeURIComponent(piece);
     const a = new Audio(url);
     a.onended = play;
-    a.onerror = () => { speakBrowser(parts.join(' ') || text, done); };
-    a.play().catch(() => speakBrowser(text, done));
+    a.onerror = () => fail([piece].concat(parts).join(' '));
+    a.play().catch(() => fail([piece].concat(parts).join(' ')));
   };
   play();
 }
@@ -102,8 +106,12 @@ function clean(msg, emotesTag){
 }
 
 // ---------- chat anonimo de Twitch (IRC por WebSocket) ----------
+const seen = new Set();
+let currentWs = null;
 function connect(){
+  if(currentWs){ currentWs.onclose = null; try{ currentWs.close(); }catch(e){} }
   const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+  currentWs = ws;
   ws.onopen = () => {
     ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
     ws.send('NICK justinfan' + Math.floor(Math.random()*90000+10000));
@@ -118,6 +126,11 @@ function connect(){
     line.slice(1, sp).split(';').forEach(kv => { const i = kv.indexOf('='); tags[kv.slice(0,i)] = kv.slice(i+1); });
     const rid = tags['custom-reward-id'];
     if(!rid) return;                       // no es un canje
+    if(tags['id']){                        // evitar leer dos veces el mismo mensaje
+      if(seen.has(tags['id'])) return;
+      seen.add(tags['id']);
+      if(seen.size > 200) seen.delete(seen.values().next().value);
+    }
     const msg = line.slice(line.indexOf(' :', line.indexOf('PRIVMSG')) + 2);
     show('Canje ' + rid + ' | ' + (tags['display-name']||'') + ': ' + msg);
     if(REWARD && rid !== REWARD) return;   // otro canje
