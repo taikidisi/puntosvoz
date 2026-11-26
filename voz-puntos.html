@@ -112,12 +112,14 @@ function claim(id, cb){
   try{
     const k = 'ttsclaim_' + id;
     setTimeout(() => {
-      if(localStorage.getItem(k)) return;       // otra copia ya lo reclamo
+      if(localStorage.getItem(k)){ show('Omitido: otra copia dentro de OBS ya lo lee'); return; }
       localStorage.setItem(k, ME);
       setTimeout(() => {
         if(localStorage.getItem(k) === ME){
           cb();
           setTimeout(() => { try{ localStorage.removeItem(k); }catch(e){} }, 60000);
+        } else {
+          show('Omitido: otra copia dentro de OBS ya lo lee');
         }
       }, 60);
     }, Math.random() * 100);
@@ -156,10 +158,11 @@ function connect(){
     let text = clean(msg, tags['emotes']);
     if(!text) return;
     if(SAYNAME) text = (tags['display-name'] || '') + ' dice: ' + text;
-    claim(tags['id'], () => enqueue(text));
+    claim(tags['id'], () => { show('[' + ME.slice(0,4) + '] leyendo: ' + text); enqueue(text); });
   });
   ws.onclose = () => setTimeout(connect, 3000);
 }
+show('Versión 4 · copia ' + ME.slice(0,4) + ' conectada');
 if(CHANNEL) connect();
 </script>
 </body>
